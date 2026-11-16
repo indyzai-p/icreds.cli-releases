@@ -15,6 +15,8 @@ try:
             raise ValueError("public source contains a symlink or oversized file")
         if not (name in {"README.md", "SECURITY.md", "SDK-PUBLISHING.md", ".gitignore"} or name.startswith(("sdk/", "scripts/", ".github/"))):
             raise ValueError("unapproved repository root content")
+        if any(part.lower().startswith(".env") or part.lower() in {".aws", ".npmrc", ".pypirc", ".netrc", "id_rsa", "id_ed25519"} for part in path.parts) or path.suffix.lower() in sdk_export.SUFFIXES:
+            raise ValueError("custody/config/build material in public source")
         if name.startswith("sdk/"):
             parts = path.parts
             if len(parts) < 3 or parts[1] not in sdk_export.LANGUAGES:

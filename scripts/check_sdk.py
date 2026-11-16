@@ -13,6 +13,8 @@ PACKAGES = {"go": "github.com/indyzai-p/icreds.cli-releases/sdk/go", "python": "
 def validate(root, sdk, version):
     if sdk not in PACKAGES or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
         raise ValueError("supported SDK and stable semantic version required")
+    if sdk == "go" and int(version.split(".")[0]) >= 2:
+        raise ValueError("Go v2+ requires a reviewed module-path migration")
     base = root / "sdk" / sdk
     meta = json.loads((base / "release.json").read_text())
     if meta.get("status") != "ready" or meta.get("version") != version or meta.get("package") != PACKAGES[sdk] or not meta.get("license"):

@@ -11,7 +11,7 @@ import sdk_export
 
 def content(name, data):
     path = PurePosixPath(name)
-    if path.is_absolute() or ".." in path.parts or "\\" in name or any(p in {".git", ".env", ".aws", ".npmrc", ".pypirc", "node_modules", "migrations", "deployments"} or p.startswith(".env.") for p in path.parts):
+    if path.is_absolute() or ".." in path.parts or "\\" in name or any(p.lower() in {".git", ".env", ".aws", ".npmrc", ".pypirc", ".netrc", "id_rsa", "id_ed25519", "node_modules", "migrations", "deployments"} or p.lower().startswith(".env.") for p in path.parts):
         raise ValueError("unsafe package path")
     if path.suffix.lower() in {".pem", ".key", ".p12", ".pfx", ".jks", ".keystore"}:
         raise ValueError("custody material in package")
