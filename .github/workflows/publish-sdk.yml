@@ -1,0 +1,244 @@
+name: Publish reviewed SDK
+on:
+  push:
+    tags: ['sdk/go/v*', 'sdk/python/v*', 'sdk/java/v*', 'sdk/node/v*', 'sdk/rust/v*']
+  workflow_dispatch:
+    inputs:
+      sdk:
+        type: choice
+        options: [go, python, java, node, rust]
+        required: true
+      version:
+        description: Stable semantic version without v (for example 0.1.0)
+        type: string
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: sdk-publication
+  cancel-in-progress: false
+jobs:
+  prepare:
+    if: github.repository == 'indyzai-p/icreds.cli-releases'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      sdk: ${{ steps.select.outputs.sdk }}
+      version: ${{ steps.select.outputs.version }}
+      tag: ${{ steps.select.outputs.tag }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Select a reviewed main-branch commit and ready package
+        id: select
+        env:
+          INPUT_SDK: ${{ inputs.sdk }}
+          INPUT_VERSION: ${{ inputs.version }}
+          REF: ${{ github.ref }}
+          EVENT: ${{ github.event_name }}
+          ENABLED: ${{ vars.SDK_PUBLISH_ENABLED }}
+        run: |
+          set -euo pipefail
+          [[ "$ENABLED" == true ]] || { echo 'Configure SDK release environments/identities and SDK_PUBLISH_ENABLED first.' >&2;exit 1; }
+          git merge-base --is-ancestor HEAD origin/main
+          if [[ "$EVENT" == push ]];then
+            [[ "$REF" =~ ^refs/tags/sdk/(go|python|java|node|rust)/v([0-9]+\.[0-9]+\.[0-9]+)$ ]]
+            sdk="${BASH_REMATCH[1]}";version="${BASH_REMATCH[2]}"
+          else
+            [[ "$REF" == refs/heads/main ]]
+            sdk="$INPUT_SDK";version="$INPUT_VERSION"
+          fi
+          python3 scripts/check_sdk.py "$sdk" "$version"
+          echo "sdk=$sdk" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=sdk/$sdk/v$version" >> "$GITHUB_OUTPUT"
+  build:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.26.0'
+          cache: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        if: needs.prepare.outputs.sdk == 'java'
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        if: needs.prepare.outputs.sdk == 'node'
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Install pinned Rust toolchain
+        if: needs.prepare.outputs.sdk == 'rust'
+        run: rustup toolchain install 1.90.0 --profile minimal --component clippy
+      - name: Scan reviewed source before building
+        run: |
+          go install github.com/zricethezav/gitleaks/v8@v8.24.3
+          gitleaks dir . --redact --no-banner
+      - name: Build and test without publishing credentials
+        env:
+          SDK: ${{ needs.prepare.outputs.sdk }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          RUSTUP_TOOLCHAIN: 1.90.0
+        run: |
+          bash scripts/build-sdk.sh "$SDK" "$VERSION" dist
+          python3 scripts/audit_artifacts.py dist
+          gitleaks dir dist --redact --no-banner
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sdk-release
+          path: dist/
+          retention-days: 7
+          if-no-files-found: error
+  github-release:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: sdk-release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: sdk-release
+          path: dist/
+      - name: Publish complete immutable SDK assets, preserving CLI latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: indyzai-p/icreds.cli-releases
+          TAG: ${{ needs.prepare.outputs.tag }}
+          SDK: ${{ needs.prepare.outputs.sdk }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum --check SHA256SUMS)
+          python3 scripts/audit_artifacts.py dist
+          # A pre-existing tag must identify this exact reviewed commit.
+          remote="$(gh api "repos/$GH_REPO/commits/$TAG" --jq .sha 2>/dev/null || true)"
+          [[ -z "$remote" || "$remote" == "$COMMIT" ]] || { echo 'Tag already identifies another commit.' >&2;exit 1; }
+          if gh release view "$TAG" --json isDraft --jq .isDraft > is-draft;then
+            if [[ "$(cat is-draft)" != true ]];then echo 'SDK release already published; assets remain immutable.';exit 0;fi
+          else
+            gh release create "$TAG" --target "$COMMIT" --draft --title "iCreds $SDK SDK ${TAG##*/}" --notes 'SDK packages and dependency inventories from the reviewed public source commit. CLI releases are separate.'
+          fi
+          gh release upload "$TAG" dist/* --clobber
+          gh release edit "$TAG" --draft=false --latest=false
+  pypi:
+    needs: [prepare, github-release]
+    if: needs.prepare.outputs.sdk == 'python'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: sdk-pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: sdk-release
+          path: artifacts/
+      - name: Select the already-built distributions
+        run: |
+          (cd artifacts && sha256sum --check SHA256SUMS)
+          mkdir dist
+          cp artifacts/*.whl artifacts/*.tar.gz dist/
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
+        with:
+          attestations: true
+  npm:
+    needs: [prepare, github-release]
+    if: needs.prepare.outputs.sdk == 'node'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: sdk-npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: sdk-release
+          path: artifacts/
+      - name: Publish exact tarball with OIDC provenance
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          (cd artifacts && sha256sum --check SHA256SUMS)
+          npm install --global npm@11.6.2 --ignore-scripts
+          # Version-specific tag prevents an older retry rolling latest backwards.
+          npm publish artifacts/*.tgz --ignore-scripts --provenance --access public --tag "sdk-v$VERSION"
+          # Promotion to latest is explicit after verifying channel order.
+  crates:
+    needs: [prepare, github-release]
+    if: needs.prepare.outputs.sdk == 'rust'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: sdk-crates
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: sdk-release
+          path: artifacts/
+      - name: Verify Cargo would publish the tested archive
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          RUSTUP_TOOLCHAIN: 1.90.0
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.90.0 --profile minimal
+          (cd artifacts && sha256sum --check SHA256SUMS)
+          cd sdk/rust
+          cargo package --locked --no-verify
+          cmp "target/package/icreds-sdk-$VERSION.crate" "../../artifacts/icreds-sdk-$VERSION.crate"
+      - name: Publish with a crate-scoped identity; do not execute SDK build scripts
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+          RUSTUP_TOOLCHAIN: 1.90.0
+        working-directory: sdk/rust
+        run: cargo publish --locked --no-verify
+  maven:
+    needs: [prepare, github-release]
+    if: needs.prepare.outputs.sdk == 'java'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: sdk-maven
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: sdk-release
+          path: artifacts/
+      - name: Sign built files and publish through Central Portal
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          MAVEN_SIGNING_KEY: ${{ secrets.MAVEN_SIGNING_KEY }}
+          MAVEN_SIGNING_PASSPHRASE: ${{ secrets.MAVEN_SIGNING_PASSPHRASE }}
+          MAVEN_SIGNING_FINGERPRINT: ${{ vars.MAVEN_SIGNING_FINGERPRINT }}
+          CENTRAL_TOKEN_USERNAME: ${{ secrets.CENTRAL_TOKEN_USERNAME }}
+          CENTRAL_TOKEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN_PASSWORD }}
+        run: bash scripts/publish-maven.sh "$VERSION" artifacts

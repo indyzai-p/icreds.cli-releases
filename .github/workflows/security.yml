@@ -1,0 +1,40 @@
+name: Public SDK security checks
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: sdk-security-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  source-boundary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.26.0'
+          cache: false
+      - name: Check source boundary and publication guards
+        run: |
+          python3 scripts/check_layout.py
+          python3 -m unittest discover -s scripts/tests -v
+          bash -n scripts/build-sdk.sh scripts/publish-maven.sh
+          git diff --check
+      - name: Scan public source without exposing matched secrets
+        run: |
+          go install github.com/zricethezav/gitleaks/v8@v8.24.3
+          gitleaks dir . --redact --no-banner
+      - name: Validate immutable-pinned publishing workflows
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          actionlint -shellcheck=
