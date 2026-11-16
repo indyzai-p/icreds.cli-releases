@@ -35,10 +35,10 @@ CLI features are already available in older releases.
 | Go | `sdk/go` | `github.com/indyzai-p/icreds.cli-releases/sdk/go` | Planned |
 | Python | `sdk/python` | PyPI `icreds-sdk`, import `icreds` | Planned |
 | Java | `sdk/java` | Maven `com.indyzai:icreds-sdk` | Planned |
-| Node.js / TypeScript | `sdk/node` | npm `@indyzai/icreds` | Implemented v0.1.0; npm publication pending |
+| Node.js / TypeScript | `sdk/node` | npm `@indyzai/icreds` | [Available: 0.1.0](https://www.npmjs.com/package/@indyzai/icreds) |
 | Rust | `sdk/rust` | crates.io `icreds-sdk` | Planned |
 
-Node.js SDK source is implemented; the other SDK directories remain reserved.
+Node.js SDK 0.1.0 is published to npm; the other SDK directories remain reserved.
 No placeholder package is published. Each SDK
 must pass implementation, protocol/security and packaging gates before its status
 changes to ready. Names require registry ownership/availability verification.
