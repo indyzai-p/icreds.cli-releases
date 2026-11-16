@@ -1,6 +1,6 @@
 # SDK publishing and public repository hardening
 
-All five SDKs use this repository. Node.js v0.1.0 is implemented; the other SDK
+All five SDKs use this repository. Node.js v0.1.0 is published to npm; the other SDK
 implementations are pending. Publishing
 is deliberately disabled until real code, tests, license and registry ownership
 are ready. No registry names or security certification are implied by placeholders.
