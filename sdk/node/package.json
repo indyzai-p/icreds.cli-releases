@@ -1,0 +1,50 @@
+{
+  "name": "@indyzai/icreds",
+  "version": "0.1.0",
+  "description": "iCreds Node.js SDK with HTTPS/JWE secret access and management clients",
+  "type": "module",
+  "private": false,
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "import": "./src/index.js"
+    }
+  },
+  "types": "./src/index.d.ts",
+  "files": [
+    "src/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "node --check src/index.js && node --check src/transport.js && node --check src/protocol.js && node --check src/device.js && tsc --noEmit --strict --module NodeNext --moduleResolution NodeNext --target ES2022 test/types.mts",
+    "test": "node --test test/*.test.mjs"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/indyzai-p/icreds.cli-releases.git",
+    "directory": "sdk/node"
+  },
+  "homepage": "https://github.com/indyzai-p/icreds.cli-releases/tree/main/sdk/node",
+  "bugs": {
+    "url": "https://github.com/indyzai-p/icreds.cli-releases/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "keywords": [
+    "icreds",
+    "secrets",
+    "jwe",
+    "credentials"
+  ],
+  "devDependencies": {
+    "@types/node": "22.18.0",
+    "typescript": "5.9.3"
+  }
+}
